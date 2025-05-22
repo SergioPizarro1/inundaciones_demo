@@ -1,6 +1,6 @@
 import torch
 import torchvision
-import torch.nn.Functional as F
+import torch.nn.functional as F
 import PIL 
 import os
 
