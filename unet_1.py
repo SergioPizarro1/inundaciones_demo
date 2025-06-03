@@ -152,7 +152,7 @@ if __name__ == '__main__':
         image_tensor.append(tt)
 
         mask = image.replace('.jpg', '.png')
-        dd = PIL.Image.open(f'./flood/data/Image/{mask}')
+        dd = PIL.Image.open(f'./flood/data/Mask/{mask}')
         mm = torchvision.transforms.functional.pil_to_tensor(dd)
         mm = mm.repeat(3, 1, 1)
         mm = torchvision.transforms.functional.resize(mm, (100, 100))
