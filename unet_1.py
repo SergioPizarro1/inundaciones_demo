@@ -131,15 +131,15 @@ class OutConv(torch.nn.Module):
 
 if __name__ == '__main__':
 
-    images=os.listdir('./home/224A1087sergio/inundaciones_demo/flood/data/Image')
-    mask=os.listdir('./home/224A1087sergio/inundaciones_demo/flood/data/Mask')
+    images=os.listdir('./flood/data/Image')
+    mask=os.listdir('.//flood/data/Mask')
 
     print(len(images), len(mask))
 
     image_tensor=list()
     mask_tensor=list()
     for image in images:
-        dd = PIL.Image.open(f'./home/224A1087sergio/inundaciones_demo/flood/data/Image/{image}')
+        dd = PIL.Image.open(f'./flood/data/Image/{image}')
         tt = torchvision.transforms.functional.pil_to_tensor(dd)
         tt = torchvision.transforms.functional.resize(tt, (100, 100))
 
@@ -152,7 +152,7 @@ if __name__ == '__main__':
         image_tensor.append(tt)
 
         mask = image.replace('.jpg', '.png')
-        dd = PIL.Image.open(f'./home/224A1087sergio/inundaciones_demo/flood/data/Image/{mask}')
+        dd = PIL.Image.open(f'./flood/data/Image/{mask}')
         mm = torchvision.transforms.functional.pil_to_tensor(dd)
         mm = mm.repeat(3, 1, 1)
         mm = torchvision.transforms.functional.resize(mm, (100, 100))
