@@ -1,17 +1,17 @@
-import os
 import torch
-import torchvision
+import torchvision.transforms.functional as TF
 import torch.nn.functional as F
-import PIL.Image
+import PIL
+import os
+from torch.utils.data import DataLoader, TensorDataset
+from torch.optim import Adam
 from torch.optim.lr_scheduler import StepLR
-from torch.utils.data import TensorDataset, random_split, DataLoader
 from matplotlib import pyplot as plt
 
-# -------------------
-# 1) DEFINICIÓN DEL UNET
-# -------------------
+# … (clases DoubleConv, Down, Up, OutConv, UNet idénticas a las tuyas) …
 class DoubleConv(torch.nn.Module):
-    """(conv => [BN] => ReLU) * 2"""
+    """(convolution => [BN] => ReLU) * 2"""
+
     def __init__(self, in_channels, out_channels, mid_channels=None):
         super().__init__()
         if not mid_channels:
@@ -24,67 +24,28 @@ class DoubleConv(torch.nn.Module):
             torch.nn.BatchNorm2d(out_channels),
             torch.nn.ReLU(inplace=True)
         )
+
     def forward(self, x):
         return self.double_conv(x)
-
-class Down(torch.nn.Module):
-    """Downscaling con MaxPool luego DoubleConv"""
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.maxpool_conv = torch.nn.Sequential(
-            torch.nn.MaxPool2d(2),
-            DoubleConv(in_channels, out_channels)
-        )
-    def forward(self, x):
-        return self.maxpool_conv(x)
-
-class Up(torch.nn.Module):
-    """Upscaling luego DoubleConv"""
-    def __init__(self, in_channels, out_channels, bilinear=True):
-        super().__init__()
-        if bilinear:
-            self.up = torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-            self.conv = DoubleConv(in_channels, out_channels, in_channels // 2)
-        else:
-            self.up = torch.nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
-            self.conv = DoubleConv(in_channels, out_channels)
-    def forward(self, x1, x2):
-        x1 = self.up(x1)
-        # Ajustar padding si hace falta
-        diffY = x2.size()[2] - x1.size()[2]
-        diffX = x2.size()[3] - x1.size()[3]
-        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
-                        diffY // 2, diffY - diffY // 2])
-        # Concatenar
-        x = torch.cat([x2, x1], dim=1)
-        return self.conv(x)
-
-class OutConv(torch.nn.Module):
-    """Última capa 1×1"""
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.conv = torch.nn.Conv2d(in_channels, out_channels, kernel_size=1)
-    def forward(self, x):
-        return self.conv(x)
-
+    
 class UNet(torch.nn.Module):
     def __init__(self, n_channels, n_classes, bilinear=False):
-        super().__init__()
+        super(UNet, self).__init__()
         self.n_channels = n_channels
-        self.n_classes  = n_classes
-        self.bilinear   = bilinear
+        self.n_classes = n_classes
+        self.bilinear = bilinear
 
-        self.inc   = DoubleConv(n_channels, 64)
-        self.down1 = Down(64, 128)
-        self.down2 = Down(128, 256)
-        self.down3 = Down(256, 512)
-        factor     = 2 if bilinear else 1
-        self.down4 = Down(512, 1024 // factor)
-        self.up1   = Up(1024, 512 // factor, bilinear)
-        self.up2   = Up(512, 256 // factor, bilinear)
-        self.up3   = Up(256, 128 // factor, bilinear)
-        self.up4   = Up(128, 64, bilinear)
-        self.outc  = OutConv(64, n_classes)
+        self.inc = (DoubleConv(n_channels, 64))
+        self.down1 = (Down(64, 128))
+        self.down2 = (Down(128, 256))
+        self.down3 = (Down(256, 512))
+        factor = 2 if bilinear else 1
+        self.down4 = (Down(512, 1024 // factor))
+        self.up1 = (Up(1024, 512 // factor, bilinear))
+        self.up2 = (Up(512, 256 // factor, bilinear))
+        self.up3 = (Up(256, 128 // factor, bilinear))
+        self.up4 = (Up(128, 64, bilinear))
+        self.outc = (OutConv(64, n_classes))
 
     def forward(self, x):
         x1 = self.inc(x)
@@ -92,215 +53,240 @@ class UNet(torch.nn.Module):
         x3 = self.down2(x2)
         x4 = self.down3(x3)
         x5 = self.down4(x4)
-        x  = self.up1(x5, x4)
-        x  = self.up2(x, x3)
-        x  = self.up3(x, x2)
-        x  = self.up4(x, x1)
-        return self.outc(x)
+        x = self.up1(x5, x4)
+        x = self.up2(x, x3)
+        x = self.up3(x, x2)
+        x = self.up4(x, x1)
+        logits = self.outc(x)
 
-# -------------------
-# 2) PARÁMETROS Y DEVICE
-# -------------------
+        return logits
+
+    def use_checkpointing(self):
+        self.inc = torch.utils.checkpoint(self.inc)
+        self.down1 = torch.utils.checkpoint(self.down1)
+        self.down2 = torch.utils.checkpoint(self.down2)
+        self.down3 = torch.utils.checkpoint(self.down3)
+        self.down4 = torch.utils.checkpoint(self.down4)
+        self.up1 = torch.utils.checkpoint(self.up1)
+        self.up2 = torch.utils.checkpoint(self.up2)
+        self.up3 = torch.utils.checkpoint(self.up3)
+        self.up4 = torch.utils.checkpoint(self.up4)
+        self.outc = torch.utils.checkpoint(self.outc)
+
+
+class Down(torch.nn.Module):
+    """Downscaling with maxpool then double conv"""
+
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.maxpool_conv = torch.nn.Sequential(
+            torch.nn.MaxPool2d(2),
+            DoubleConv(in_channels, out_channels)
+        )
+
+    def forward(self, x):
+        return self.maxpool_conv(x)
+
+
+class Up(torch.nn.Module):
+    """Upscaling then double conv"""
+
+    def __init__(self, in_channels, out_channels, bilinear=True):
+        super().__init__()
+
+        # if bilinear, use the normal convolutions to reduce the number of channels
+        if bilinear:
+            self.up = torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+            self.conv = DoubleConv(in_channels, out_channels, in_channels // 2)
+        else:
+            self.up = torch.nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
+            self.conv = DoubleConv(in_channels, out_channels)
+
+    def forward(self, x1, x2):
+        x1 = self.up(x1)
+        # input is CHW
+        diffY = x2.size()[2] - x1.size()[2]
+        diffX = x2.size()[3] - x1.size()[3]
+
+        x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
+                        diffY // 2, diffY - diffY // 2])
+        # if you have padding issues, see
+        # https://github.com/HaiyongJiang/U-Net-Pytorch-Unstructured-Buggy/commit/0e854509c2cea854e247a9c615f175f76fbb2e3a
+        # https://github.com/xiaopeng-liao/Pytorch-UNet/commit/8ebac70e633bac59fc22bb5195e513d5832fb3bd
+        x = torch.cat([x2, x1], dim=1)
+        x =  self.conv(x)
+
+        return x
+
+
+class OutConv(torch.nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(OutConv, self).__init__()
+        self.conv = torch.nn.Conv2d(in_channels, out_channels, kernel_size=1)
+
+    def forward(self, x):
+        return self.conv(x)
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Usando dispositivo: {device}\n")
 
-images_dir = './flood/data/Image/'
-masks_dir  = './flood/data/Mask/'
+if __name__ == '__main__':
+    # --- 1) Leer y concatenar imágenes y máscaras ---
+    images = sorted(os.listdir('./flood/data/Image/'))
+    image_list = []
+    mask_list  = []
+    for image in images:
+        # 1a) Leer imagen
+        dd = PIL.Image.open(f'./flood/data/Image/{image}').convert('RGB')
+        tt = TF.pil_to_tensor(dd)                    # [3, H, W], uint8
+        tt = TF.resize(tt, (100, 100))               # [3, 100,100]
+        tt = tt.float() / 255.                        # [3, 100,100], float
+        tt = tt.unsqueeze(0)                          # [1, 3, 100,100]
+        if tt.shape != (1, 3, 100, 100):
+            continue
+        image_list .append(tt)
 
-# Hiperparámetros sugeridos (puedes ajustar)
-batch_size   = 32
-num_epochs   = 20
-learning_rate= 1e-3
-step_size    = 5    # cada 5 épocas reduce lr
-gamma        = 0.5  # factor de reducción
+        # 1b) Leer máscara correspondiente
+        mask_name = image.replace('.jpg', '.png')
+        ddm = PIL.Image.open(f'./flood/data/Mask/{mask_name}').convert('L')
+        mm = TF.pil_to_tensor(ddm)                   # [1, H, W], uint8
+        mm = TF.resize(mm, (100, 100))               # [1, 100,100]
+        # Convertir a etiquetas {0,1}
+        mm = (mm > 0).long().squeeze(0)               # [100, 100], valores 0 ó 1
+        mask_list.append(mm.unsqueeze(0))             # ahora [1, 100,100]
 
-# -------------------
-# 3) CARGA DE IMÁGENES Y MÁSCARAS A MEMORIA
-# -------------------
-# → Leemos todas las imágenes, las resizeamos a 100×100, normalizamos y apilamos en un solo Tensor
-# → Lo mismo con las máscaras, pero generando one-hot (2 clases: fondo=0 e inundación=1)
+    # Concatenar todos en un solo tensor
+    image_tensor = torch.cat(image_list, dim=0)       # [N, 3, 100,100]
+    masks_tensor = torch.cat(mask_list, dim=0)        # [N, 1, 100,100] ó [N, 100,100] si haces squeeze
 
-image_list = []
-mask_list  = []
+    N = image_tensor.size(0)
+    # --- 2) Split aleatorio (80% train, 20% test) ---
+    train_frac = 0.8
+    N_train = int(train_frac * N)
+    N_test  = N - N_train
+    perm = torch.randperm(N)
+    idx_train, idx_test = perm[:N_train], perm[N_train:]
+    train_images = image_tensor[idx_train]            # [N_train, 3,100,100]
+    train_masks  = masks_tensor[idx_train].squeeze(1) # [N_train,100,100]
+    test_images  = image_tensor[idx_test]             # [N_test, 3,100,100]
+    test_masks   = masks_tensor[idx_test].squeeze(1)  # [N_test, 100,100]
+    print(f"N={N}  |  Train={train_images.size(0)}  |  Test={test_images.size(0)}")
 
-all_images = sorted(os.listdir(images_dir))
-print(f"Total de imágenes en carpeta: {len(all_images)}")
+    # --- 3) DataLoaders con TensorDataset ---
+    batch_size = 16
+    train_ds = TensorDataset(train_images, train_masks)
+    test_ds  = TensorDataset(test_images,  test_masks)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,  num_workers=2, pin_memory=True)
+    test_loader  = DataLoader(test_ds,  batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True)
 
-for filename in all_images:
-    # 1) Cargar imagen
-    img_path = os.path.join(images_dir, filename)
-    img_pil  = PIL.Image.open(img_path).convert("RGB")
-    img_tens = torchvision.transforms.functional.pil_to_tensor(img_pil)  # [3,H,W], uint8
-    img_tens = torchvision.transforms.functional.resize(img_tens, (100, 100))
-    img_tens = img_tens.float() / 255.0  # [3,100,100], float
+    # --- 4) Modelo + Optimizador + Scheduler + Crítico de pérdida ---
+    unet = UNet(n_channels=3, n_classes=2).to(device)
+    optim = Adam(unet.parameters(), lr=1e-3, weight_decay=1e-5)
+    scheduler = StepLR(optim, step_size=5, gamma=0.5)
+    criterion = torch.nn.CrossEntropyLoss()
 
-    # Añadimos la dimensión de batch: [1,3,100,100]
-    img_tens = img_tens.unsqueeze(0)
-    image_list.append(img_tens)
+    # Listas para almacenar métricas por época
+    loss_list_train    = []
+    iou_list_train     = []
+    loss_list_test     = []
+    iou_list_test      = []
 
-    # 2) Cargar máscara emparejada
-    # Asumimos que si la imagen se llama "0001.jpg", la máscara es "0001.png"
-    base, _   = os.path.splitext(filename)
-    mask_name = base + '.png'
-    mask_path = os.path.join(masks_dir, mask_name)
-    if not os.path.isfile(mask_path):
-        # Si no existe la máscara, la saltamos
-        continue
+    # --- 5) Bucle principal de entrenamiento + validación ---
+    num_epochs = 30
+    for epoch in range(num_epochs):
+        # -------- ENTRENAMIENTO --------
+        unet.train()
+        running_loss_train = 0.0
+        iou_accum_train    = []
 
-    mask_pil  = PIL.Image.open(mask_path).convert("L")  # en escala de grises
-    mask_tens = torchvision.transforms.functional.pil_to_tensor(mask_pil)  # [1,H,W], uint8
-    mask_tens = torchvision.transforms.functional.resize(mask_tens, (100, 100))
-    mask_tens = (mask_tens > 0).long().squeeze(0)  # [100,100], valores 0 o 1
+        for imgs, masks in train_loader:
+            imgs  = imgs.to(device)               # [B, 3,100,100]
+            masks = masks.to(device)              # [B, 100,100] con valores 0 ó 1
 
-    # One-hot para 2 clases: resultado [2,100,100]
-    mask_onehot = F.one_hot(mask_tens, num_classes=2)      # [100,100,2]
-    mask_onehot = mask_onehot.permute(2, 0, 1).float()      # [2,100,100]
-    mask_onehot = mask_onehot.unsqueeze(0)                  # [1,2,100,100]
-    mask_list.append(mask_onehot)
+            optim.zero_grad()
+            preds = unet(imgs)                    # [B, 2,100,100]
+            loss  = criterion(preds, masks)       # CrossEntropy espera [B,2,H,W] vs [B,H,W]
+            loss.backward()
+            optim.step()
+            running_loss_train += loss.item() * imgs.size(0)
 
-# Concatenamos todos en un solo tensor:
-#  → image_tensor: [N, 3, 100, 100]
-#  → masks_tensor: [N, 2, 100, 100]
-image_tensor = torch.cat(image_list, dim=0)
-masks_tensor = torch.cat(mask_list, dim=0)
+            # Cálculo de IoU (para la clase “1”) en este batch
+            with torch.no_grad():
+                pred_labels = torch.argmax(preds, dim=1)   # [B, 100,100]
+                # Máscara de predicción y verdad donde hay “1” (inundación)
+                pred_fg   = (pred_labels == 1)
+                target_fg = (masks == 1)
+                intersection = (pred_fg & target_fg).sum(dim=(1,2)).float()
+                union        = (pred_fg | target_fg).sum(dim=(1,2)).float()
+                # Evitar división por cero
+                iou_batch = torch.where(union == 0,
+                                        torch.ones_like(intersection),
+                                        intersection / union)
+                iou_accum_train.append(iou_batch.mean().item())
 
-print(f"Tensor de imágenes:  {image_tensor.shape}")
-print(f"Tensor de máscaras:   {masks_tensor.shape}\n")
+        epoch_loss_train = running_loss_train / len(train_ds)
+        epoch_iou_train  = sum(iou_accum_train) / len(iou_accum_train)
+        loss_list_train.append(epoch_loss_train)
+        iou_list_train.append(epoch_iou_train)
 
-# -------------------
-# 4) CREAR DATASET Y SPLIT (train/test)
-# -------------------
-# Construimos un TensorDataset para mantener sincronizados image y mask
-dataset = TensorDataset(image_tensor, masks_tensor)
+        # -------- VALIDACIÓN / TEST --------
+        unet.eval()
+        running_loss_test = 0.0
+        iou_accum_test    = []
 
-N_total   = len(dataset)
-N_train   = int(0.8 * N_total)       # 80% → train
-N_test    = N_total - N_train        # 20% → test
-
-# Para reproducibilidad:
-g = torch.Generator().manual_seed(42)
-
-train_ds, test_ds = random_split(dataset, [N_train, N_test], generator=g)
-print(f"Tamaño total dataset: {N_total}")
-print(f"  → Train: {len(train_ds)}  |  Test: {len(test_ds)}\n")
-
-train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,  num_workers=2, pin_memory=True)
-test_loader  = DataLoader(test_ds,  batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True)
-
-# -------------------
-# 5) INSTANCIAR UNET, OPTIMIZADOR, CRITERIO, SCHEDULER
-# -------------------
-unet       = UNet(n_channels=3, n_classes=2, bilinear=False).to(device)
-optimizer  = torch.optim.Adam(unet.parameters(), lr=learning_rate, weight_decay=1e-5)
-criterion  = torch.nn.CrossEntropyLoss()
-scheduler  = StepLR(optimizer, step_size=step_size, gamma=gamma)
-
-# Listas para almacenar métricas por época
-loss_train_list = []
-loss_test_list  = []
-iou_train_list  = []
-iou_test_list   = []
-
-# -------------------
-# 6) BUCLE DE ENTRENAMIENTO Y VALIDACIÓN
-# -------------------
-for epoch in range(num_epochs):
-    unet.train()
-    running_loss_train = 0.0
-    iou_accum_train    = []
-
-    # → Entrenamiento
-    for batch_imgs, batch_masks_onehot in train_loader:
-        batch_imgs = batch_imgs.to(device)                   # [B,3,100,100]
-        batch_masks_onehot = batch_masks_onehot.to(device)   # [B,2,100,100]
-        # CrossEntropyLoss espera etiquetas como [B,H,W] con clases (0/1), no one-hot
-        batch_masks_labels = torch.argmax(batch_masks_onehot, dim=1)  # [B,100,100]
-
-        optimizer.zero_grad()
-        preds = unet(batch_imgs)                              # [B,2,100,100]
-        loss  = criterion(preds, batch_masks_labels)
-        loss.backward()
-        optimizer.step()
-
-        running_loss_train += loss.item() * batch_imgs.size(0)
-
-        # Cálculo de IoU (Jaccard) en train para este batch
         with torch.no_grad():
-            _, preds_labels = torch.max(preds, dim=1)                 # [B,100,100]
-            # IoU para la clase "1" (inundación)
-            preds_fg   = (preds_labels == 1)
-            target_fg  = (batch_masks_labels == 1)
-            intersection = torch.logical_and(preds_fg, target_fg).sum(dim=(1,2)).float()
-            union        = torch.logical_or(preds_fg, target_fg).sum(dim=(1,2)).float()
-            # Para evitar división por cero:
-            iou_batch = torch.where(union == 0, torch.ones_like(intersection), intersection / union)
-            iou_accum_train.append(iou_batch.mean().item())
+            for imgs, masks in test_loader:
+                imgs  = imgs.to(device)
+                masks = masks.to(device)
 
-    epoch_loss_train = running_loss_train / len(train_loader.dataset)
-    epoch_iou_train  = float(torch.tensor(iou_accum_train).mean())
-    loss_train_list.append(epoch_loss_train)
-    iou_train_list.append(epoch_iou_train)
+                preds = unet(imgs)
+                loss  = criterion(preds, masks)
+                running_loss_test += loss.item() * imgs.size(0)
 
-    # → Validación / Test
-    unet.eval()
-    running_loss_test = 0.0
-    iou_accum_test    = []
+                pred_labels = torch.argmax(preds, dim=1)
+                pred_fg   = (pred_labels == 1)
+                target_fg = (masks == 1)
+                intersection = (pred_fg & target_fg).sum(dim=(1,2)).float()
+                union        = (pred_fg | target_fg).sum(dim=(1,2)).float()
+                iou_batch    = torch.where(union == 0,
+                                           torch.ones_like(intersection),
+                                           intersection / union)
+                iou_accum_test.append(iou_batch.mean().item())
 
-    with torch.no_grad():
-        for batch_imgs, batch_masks_onehot in test_loader:
-            batch_imgs = batch_imgs.to(device)
-            batch_masks_onehot = batch_masks_onehot.to(device)
-            batch_masks_labels = torch.argmax(batch_masks_onehot, dim=1)
+        epoch_loss_test = running_loss_test / len(test_ds)
+        epoch_iou_test  = sum(iou_accum_test) / len(iou_accum_test)
+        loss_list_test.append(epoch_loss_test)
+        iou_list_test.append(epoch_iou_test)
 
-            preds = unet(batch_imgs)
-            loss  = criterion(preds, batch_masks_labels)
-            running_loss_test += loss.item() * batch_imgs.size(0)
+        # Ajustar LR si estás usando scheduler
+        scheduler.step()
 
-            # IoU en test para este batch
-            _, preds_labels = torch.max(preds, dim=1)
-            preds_fg  = (preds_labels == 1)
-            target_fg = (batch_masks_labels == 1)
-            intersection = torch.logical_and(preds_fg, target_fg).sum(dim=(1,2)).float()
-            union        = torch.logical_or(preds_fg, target_fg).sum(dim=(1,2)).float()
-            iou_batch    = torch.where(union == 0, torch.ones_like(intersection), intersection / union)
-            iou_accum_test.append(iou_batch.mean().item())
+        print(
+            f"Epoch [{epoch+1}/{num_epochs}]  "
+            f"Loss Train: {epoch_loss_train:.4f}  |  IoU Train: {epoch_iou_train:.4f}  ||  "
+            f"Loss Test:  {epoch_loss_test:.4f}  |  IoU Test:  {epoch_iou_test:.4f}"
+        )
 
-    epoch_loss_test = running_loss_test / len(test_loader.dataset)
-    epoch_iou_test  = float(torch.tensor(iou_accum_test).mean())
-    loss_test_list.append(epoch_loss_test)
-    iou_test_list.append(epoch_iou_test)
+    # --- 6) Graficar métricas (IoU vs Loss) ---
+    epochs = list(range(1, num_epochs + 1))
+    plt.figure(figsize=(10, 4))
 
-    # Reducir lr si aplica
-    scheduler.step()
+    plt.subplot(1, 2, 1)
+    plt.plot(epochs, iou_list_train, label='IoU Train')
+    plt.plot(epochs, iou_list_test,  label='IoU Test')
+    plt.title("IoU (Jaccard) Clase 1")
+    plt.xlabel("Época")
+    plt.ylabel("IoU")
+    plt.legend()
 
-    print(f"Epoch [{epoch+1}/{num_epochs}]  "
-          f"Loss Train: {epoch_loss_train:.4f}  |  IoU Train: {epoch_iou_train:.4f}  ||  "
-          f"Loss Test: {epoch_loss_test:.4f}  |  IoU Test: {epoch_iou_test:.4f}")
+    plt.subplot(1, 2, 2)
+    plt.plot(epochs, loss_list_train, label='Loss Train')
+    plt.plot(epochs, loss_list_test,  label='Loss Test')
+    plt.title("CrossEntropy Loss")
+    plt.xlabel("Época")
+    plt.ylabel("Loss")
+    plt.legend()
 
-# -------------------
-# 7) GRAFICAR PÉRDIDA E IOU (TRAIN vs TEST)
-# -------------------
-epochs = list(range(1, num_epochs + 1))
-
-plt.figure(figsize=(10,4))
-# — Pérdida
-plt.subplot(1, 2, 1)
-plt.plot(epochs, loss_train_list, label="Loss Train")
-plt.plot(epochs, loss_test_list,  label="Loss Test")
-plt.xlabel("Época")
-plt.ylabel("CrossEntropy Loss")
-plt.title("Pérdida Train vs Test")
-plt.legend()
-
-# — IoU
-plt.subplot(1, 2, 2)
-plt.plot(epochs, iou_train_list, label="IoU Train")
-plt.plot(epochs, iou_test_list,  label="IoU Test")
-plt.xlabel("Época")
-plt.ylabel("IoU (Jaccard) Clase 1")
-plt.title("IoU Train vs Test")
-plt.legend()
-
-plt.tight_layout()
-plt.savefig("metrics_comparativas.jpg", dpi=200)
-plt.show()
+    plt.tight_layout()
+    plt.savefig("Metricas.jpg", format='jpg')
+    plt.show()
