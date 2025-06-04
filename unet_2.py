@@ -128,7 +128,8 @@ class OutConv(torch.nn.Module):
     def forward(self, x):
         return self.conv(x)
 
-
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Usando dispositivo: {device}\n")
 
 if __name__ == '__main__':
     images = os.listdir('./flood/data/Image/')
@@ -171,26 +172,54 @@ if __name__ == '__main__':
     masks_tensor = torch.cat(masks_tensor)
     print(masks_tensor.shape)
 
-    unet = UNet(n_channels=3, n_classes=2)
+    N = image_tensor.size(0)
 
-    dataloader_train_image = torch.utils.data.DataLoader(image_tensor, batch_size=64)
-    dataloader_train_target = torch.utils.data.DataLoader(masks_tensor, batch_size=64)
+    # --- (2) Decidir tamaño del split ---
+    train_frac = 0.8
+    N_train = int(train_frac * N)
+    N_test  = N - N_train
 
-    optim = torch.optim.Adam(unet.parameters(), lr=1e-3)
+    # --- (3) Generar índices aleatorios y dividirlos ---
+    perm = torch.randperm(N)             # permuta las posiciones 0,1,...,N-1
+    idx_train = perm[:N_train]
+    idx_test  = perm[N_train:]
+
+    # --- (4) Indexar image_tensor y masks_tensor con esos índices ---
+    train_images = image_tensor[idx_train]   # shape: [N_train, 3, 100, 100]
+    train_masks  = masks_tensor[idx_train]   # shape: [N_train, 2, 100, 100]
+    test_images  = image_tensor[idx_test]    # shape: [N_test,  3, 100, 100]
+    test_masks   = masks_tensor[idx_test]    # shape: [N_test,  2, 100, 100]
+
+    print("N = ",image_tensor.size(0),"\n N_train = ",train_images.size(0),"\n N_test = ",test_images.size(0))
+
+
+
+    unet = UNet(n_channels=3, n_classes=2).to(device)
+
+    dataloader_train_image = torch.utils.data.DataLoader(train_images, batch_size=16, shuffle=False)
+    dataloader_train_target = torch.utils.data.DataLoader(train_masks, batch_size=16, shuffle=False)
+
+    dataloader_test_image = torch.utils.data.DataLoader(test_images, batch_size=16, shuffle=False)
+    dataloader_test_target = torch.utils.data.DataLoader(test_masks, batch_size=16, shuffle=False)
+
+    optim = torch.optim.Adam(unet.parameters(), lr=1e-5)
     cross_entropy = torch.nn.CrossEntropyLoss()
 
-    loss_list = list()
-    jaccard_list = list()
-    for epoch in range(10):
+    loss_list_train = list()
+    jaccard_list_train = list()
+
+    loss_list_test = list()
+    jaccard_list_test = list()
+
+    for epoch in range(30):
         print("Epoch {} running".format(epoch))
-        running_loss = 0.
+
         unet.train()
-
-
-        #ghg
-
-        jaccard_epoch = list()
+        running_loss = 0.
+        jaccard_epoch_train = list()
         for image, target in zip(dataloader_train_image, dataloader_train_target):
+            image=image.to(device)
+            target=target.to(device)
 
             pred = unet(image)
 
@@ -201,6 +230,8 @@ if __name__ == '__main__':
             optim.step()
 
         for image, target in zip(dataloader_train_image, dataloader_train_target):
+            image=image.to(device)
+            target=target.to(device)
 
             pred = unet(image)
 
@@ -209,27 +240,56 @@ if __name__ == '__main__':
 
             intersection = torch.sum(pred_unflatten == target_unflatten, dim=(1, 2))/10000.
 
-            jaccard_epoch.append(torch.mean(intersection).detach())
+            jaccard_epoch_train.append(torch.mean(intersection).detach())
 
-        jaccard_list.append(sum(jaccard_epoch)/len(jaccard_epoch))
-        loss_list.append(running_loss)
+        jaccard_list_train.append(sum(jaccard_epoch_train)/len(jaccard_epoch_train))
+        loss_list_train.append(running_loss)
 
+        unet.eval()
+        running_loss = 0.
+        jaccard_epoch_test = list()
+        with torch.no_grad():
+            for image, target in zip(dataloader_test_image, dataloader_test_target):
+                image=image.to(device)
+                target=target.to(device)
+
+                pred=unet(image)
+                
+                loss = cross_entropy(pred, target)
+                running_loss += loss.item()
+
+            for image, target in zip(dataloader_test_image, dataloader_test_target):
+                image=image.to(device)
+                target=target.to(device)
+
+                pred=unet(image)
+
+                _, pred_unflatten = torch.max(pred, dim=1)
+                _, target_unflatten = torch.max(target, dim=1)
+
+                intersection = torch.sum(pred_unflatten == target_unflatten, dim=(1, 2))/10000.
+
+                jaccard_epoch_test.append(torch.mean(intersection).detach())
         
+        jaccard_list_test.append(sum(jaccard_epoch_test)/len(jaccard_epoch_test))
+        loss_list_test.append(running_loss)
 
-    pyplot.clf()
-    pyplot.plot(jaccard_list)
-    pyplot.legend()
+    #pyplot.clf()
+    pyplot.subplot(1, 2, 1)
+    pyplot.plot(jaccard_list_train, label='TRAIN')
+    pyplot.plot(jaccard_list_test, label='TEST')
     pyplot.title("IOU")
-    pyplot.savefig("IOU.jpg", format='jpg')
-    pyplot.show()
-    
-
-
-#Macarena
-    #Diefooooo
-    pyplot.clf()
-    pyplot.plot(loss_list)
+    pyplot.xlabel("Epoch")
+    pyplot.ylabel("IOU")
     pyplot.legend()
+    
+    #pyplot.clf()
+    pyplot.subplot(1, 2, 2)
+    pyplot.plot(loss_list_train, label='TRAIN')
+    pyplot.plot(loss_list_test, label='TEST')
     pyplot.title("Loss")
-    pyplot.savefig("Loss.jpg", format='jpg')
+    pyplot.xlabel("Epoch")
+    pyplot.ylabel("Loss")
+    pyplot.legend()
+    pyplot.savefig("Metricas.jpg", format='jpg')
     pyplot.show()
