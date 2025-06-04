@@ -220,7 +220,8 @@ if __name__ == '__main__':
         for image, target in zip(dataloader_train_image, dataloader_train_target):
             image=image.to(device)
             target=target.to(device)
-
+            
+            optim.zero_grad()
             pred = unet(image)
 
             loss = cross_entropy(pred, target)
@@ -274,7 +275,7 @@ if __name__ == '__main__':
         jaccard_list_test.append(sum(jaccard_epoch_test)/len(jaccard_epoch_test))
         loss_list_test.append(running_loss)
 
-    #pyplot.clf()
+    pyplot.clf()
     pyplot.subplot(1, 2, 1)
     pyplot.plot(jaccard_list_train, label='TRAIN')
     pyplot.plot(jaccard_list_test, label='TEST')
