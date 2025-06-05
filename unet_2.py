@@ -243,7 +243,9 @@ if __name__ == '__main__':
 
             jaccard_epoch_train.append(torch.mean(intersection).detach())
 
-        jaccard_list_train.append(sum(jaccard_epoch_train)/len(jaccard_epoch_train))
+        jaccard = sum(jaccard_epoch_train)/len(jaccard_epoch_train)
+        jaccard_list_train.append(jaccard.cpu().item())
+
         loss_list_train.append(running_loss)
 
         unet.eval()
@@ -272,7 +274,8 @@ if __name__ == '__main__':
 
                 jaccard_epoch_test.append(torch.mean(intersection).detach())
         
-        jaccard_list_test.append(sum(jaccard_epoch_test)/len(jaccard_epoch_test))
+        jaccard = sum(jaccard_epoch_test)/len(jaccard_epoch_test)
+        jaccard_list_test.append(jaccard.cpu().item())
         loss_list_test.append(running_loss)
 
     pyplot.clf()
