@@ -265,3 +265,47 @@ if __name__ == '__main__':
     pyplot.legend()
     pyplot.savefig("Metricas.jpg", format='jpg')
     pyplot.show()
+
+    import random
+    import torchvision.transforms.functional as TF
+
+    def plot_random_sample_prediction(model, dataset, device, title_prefix, filename):
+        model.eval()
+        idx = random.randint(0, len(dataset) - 1)
+        image, mask = dataset[idx]  # elemento aleatorio
+
+        image_input = image.unsqueeze(0).to(device)  # [1, 3, H, W]
+
+        with torch.no_grad():
+            pred = model(image_input)
+            pred_class = pred.argmax(dim=1).squeeze(0).cpu()  # [H, W]
+
+        # Preparar para visualización
+        image_np = image.permute(1, 2, 0).cpu().numpy()        # [H, W, 3]
+        mask_np = mask.cpu().numpy()                          # [H, W]
+        pred_np = pred_class.numpy()                          # [H, W]
+
+        # Dibujar y guardar figura
+        fig, axs = pyplot.subplots(1, 3, figsize=(12, 4))
+        axs[0].imshow(image_np)
+        axs[0].set_title(f'{title_prefix} Image')
+        axs[0].axis('off')
+
+        axs[1].imshow(mask_np, cmap='gray')
+        axs[1].set_title(f'{title_prefix} Mask')
+        axs[1].axis('off')
+
+        axs[2].imshow(pred_np, cmap='gray')
+        axs[2].set_title(f'{title_prefix} Prediction')
+        axs[2].axis('off')
+
+        pyplot.tight_layout()
+        pyplot.savefig(filename, format='jpg')
+        pyplot.close()
+
+    # 🔹 Imagen aleatoria de entrenamiento
+    plot_random_sample_prediction(unet, train_dataset, device, "Train", "train_prediction.jpg")
+
+    # 🔸 Imagen aleatoria de test
+    plot_random_sample_prediction(unet, test_dataset, device, "Test", "test_prediction.jpg")
+
