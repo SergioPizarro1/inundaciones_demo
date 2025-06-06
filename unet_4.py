@@ -199,7 +199,7 @@ if __name__ == '__main__':
 
     # Modelo y entrenamiento
     unet = UNet(n_channels=3, n_classes=2).to(device)
-    optim = torch.optim.Adam(unet.parameters(), lr=1e-4)
+    optim = torch.optim.Adam(unet.parameters(), lr=1e-5)
     loss_fn = torch.nn.CrossEntropyLoss()
 
     loss_list_train, jaccard_list_train = [], []
@@ -230,7 +230,7 @@ if __name__ == '__main__':
         jaccard_list_train.append(sum(jaccard_epoch_train) / len(jaccard_epoch_train))
 
         unet.eval()
-        running_loss = 0.
+        running_loss = 0. 
         jaccard_epoch_test = []
         with torch.no_grad():
             for img, mask in test_loader:
