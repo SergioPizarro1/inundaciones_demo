@@ -194,8 +194,8 @@ if __name__ == '__main__':
     train_dataset = FloodDataset(train_images, train_masks)
     test_dataset = FloodDataset(test_images, test_masks)
 
-    train_loader = DataLoader(train_dataset, batch_size=12, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=12, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
 
     # Modelo y entrenamiento
     unet = UNet(n_channels=3, n_classes=2).to(device)
