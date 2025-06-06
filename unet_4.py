@@ -226,7 +226,7 @@ if __name__ == '__main__':
             intersection = (pred_classes == mask).sum(dim=(1, 2)) / (100 * 100)
             jaccard_epoch_train.append(torch.mean(intersection).cpu().item())
 
-        loss_list_train.append(running_loss) / len(train_dataset)
+        loss_list_train.append((running_loss) / len(train_loader))
         jaccard_list_train.append(sum(jaccard_epoch_train) / len(jaccard_epoch_train))
 
         unet.eval()
@@ -243,7 +243,7 @@ if __name__ == '__main__':
                 intersection = (pred_classes == mask).sum(dim=(1, 2)) / (100 * 100)
                 jaccard_epoch_test.append(torch.mean(intersection).cpu().item())
 
-        loss_list_test.append(running_loss) / len(test_dataset)
+        loss_list_test.append((running_loss) / len(test_loader))
         jaccard_list_test.append(sum(jaccard_epoch_test) / len(jaccard_epoch_test))
 
     # Plots
